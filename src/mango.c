@@ -4025,6 +4025,9 @@ void init_client_properties(Client *c) {
 	c->master_mfact_per = 0.0f;
 	c->master_inner_per = 0.0f;
 	c->stack_inner_per = 0.0f;
+	c->old_stack_inner_per = 0.0f;
+	c->old_master_inner_per = 0.0f;
+	c->old_master_mfact_per = 0.0f;
 	c->isterm = 0;
 	c->allow_csd = 0;
 	c->force_maximize = 0;
@@ -4827,6 +4830,11 @@ void exchange_two_client(Client *c1, Client *c2) {
 	} else {
 		arrange(c1->mon, false, false);
 	}
+
+	// In order to facilitate repeated exchanges for get_focused_stack_client
+	// set c2 focus order behind c1
+	wl_list_remove(&c2->flink);
+	wl_list_insert(&c1->flink, &c2->flink);
 }
 
 void set_activation_env() {
