@@ -412,6 +412,7 @@ struct Client {
 	double old_master_mfact_per, old_master_inner_per, old_stack_inner_per;
 	double old_scroller_pproportion;
 	bool ismaster;
+	bool old_ismaster;
 	bool cursor_in_upper_half, cursor_in_left_half;
 	bool isleftstack;
 	int32_t tearing_hint;
@@ -488,7 +489,6 @@ typedef struct {
 
 typedef struct {
 	struct wlr_xdg_popup *wlr_popup;
-	uint32_t type;
 	struct wl_listener destroy;
 	struct wl_listener commit;
 	struct wl_listener reposition;
@@ -804,6 +804,8 @@ static void last_cursor_surface_destroy(struct wl_listener *listener,
 										void *data);
 static int32_t keep_idle_inhibit(void *data);
 static void check_keep_idle_inhibit(Client *c);
+static void pre_caculate_before_arrange(Monitor *m, bool want_animation,
+										bool from_view, bool only_caculate);
 
 #include "data/static_keymap.h"
 #include "dispatch/bind_declare.h"
@@ -2591,6 +2593,9 @@ void destroydecoration(struct wl_listener *listener, void *data) {
 
 static void popup_unconstrain(Popup *popup) {
 	struct wlr_xdg_popup *wlr_popup = popup->wlr_popup;
+	Client *c = NULL;
+	LayerSurface *l = NULL;
+	int32_t type = -1;
 
 	if (!wlr_popup || !wlr_popup->parent) {
 		return;
@@ -2601,16 +2606,17 @@ static void popup_unconstrain(Popup *popup) {
 		wlr_log(WLR_ERROR, "Popup parent has no scene node");
 		return;
 	}
+
+	type = toplevel_from_wlr_surface(wlr_popup->base->surface, &c, &l);
+	if ((l && !l->mon) || (c && !c->mon)) {
+		wlr_xdg_popup_destroy(wlr_popup);
+		return;
+	}
+
 	int parent_lx, parent_ly;
 	wlr_scene_node_coords(parent_node, &parent_lx, &parent_ly);
 
-	struct wlr_box *scheduled = &wlr_popup->scheduled.geometry;
-	int popup_lx = parent_lx + scheduled->x;
-	int popup_ly = parent_ly + scheduled->y;
-
-	Monitor *mon = get_monitor_nearest_to(popup_lx, popup_ly);
-
-	struct wlr_box usable = popup->type == LayerShell ? mon->m : mon->w;
+	struct wlr_box usable = type == LayerShell ? l->mon->m : c->mon->w;
 
 	struct wlr_box constraint_box = {
 		.x = usable.x - parent_lx,
@@ -2633,33 +2639,22 @@ static void commitpopup(struct wl_listener *listener, void *data) {
 	Popup *popup = wl_container_of(listener, popup, commit);
 
 	struct wlr_surface *surface = data;
-	struct wlr_xdg_popup *wkr_popup =
+	struct wlr_xdg_popup *wlr_popup =
 		wlr_xdg_popup_try_from_wlr_surface(surface);
 
-	Client *c = NULL;
-	LayerSurface *l = NULL;
-	int32_t type = -1;
-
-	if (!wkr_popup || !wkr_popup->base->initial_commit)
+	if (!wlr_popup || !wlr_popup->base->initial_commit)
 		goto commitpopup_listen_free;
 
-	type = toplevel_from_wlr_surface(wkr_popup->base->surface, &c, &l);
-	if (!wkr_popup->parent || !wkr_popup->parent->data || type < 0) {
-		wlr_xdg_popup_destroy(wkr_popup);
+	if (!wlr_popup->parent || !wlr_popup->parent->data) {
 		goto commitpopup_listen_free;
 	}
 
-	wlr_scene_node_raise_to_top(wkr_popup->parent->data);
+	wlr_scene_node_raise_to_top(wlr_popup->parent->data);
 
-	wkr_popup->base->surface->data =
-		wlr_scene_xdg_surface_create(wkr_popup->parent->data, wkr_popup->base);
-	if ((l && !l->mon) || (c && !c->mon)) {
-		wlr_xdg_popup_destroy(wkr_popup);
-		goto commitpopup_listen_free;
-	}
+	wlr_popup->base->surface->data =
+		wlr_scene_xdg_surface_create(wlr_popup->parent->data, wlr_popup->base);
 
-	popup->type = type;
-	popup->wlr_popup = wkr_popup;
+	popup->wlr_popup = wlr_popup;
 
 	popup_unconstrain(popup);
 
@@ -3989,6 +3984,7 @@ void init_client_properties(Client *c) {
 	c->swallowing = NULL;
 	c->swallowedby = NULL;
 	c->ismaster = 0;
+	c->old_ismaster = 0;
 	c->isleftstack = 0;
 	c->ismaximizescreen = 0;
 	c->isfullscreen = 0;
@@ -5055,6 +5051,10 @@ setfloating(Client *c, int32_t floating) {
 		restore_size_per(c->mon, c);
 	}
 
+	if (c->isfloating && !old_floating_state) {
+		save_old_size_per(c->mon);
+	}
+
 	if (!c->force_maximize)
 		client_set_maximized(c, false);
 
@@ -5141,6 +5141,10 @@ void setmaximizescreen(Client *c, int32_t maximizescreen) {
 		restore_size_per(c->mon, c);
 	}
 
+	if (c->ismaximizescreen && !old_maximizescreen_state) {
+		save_old_size_per(c->mon);
+	}
+
 	if (!c->force_maximize && !c->ismaximizescreen) {
 		client_set_maximized(c, false);
 	} else if (!c->force_maximize && c->ismaximizescreen) {
@@ -5210,6 +5214,10 @@ void setfullscreen(Client *c, int32_t fullscreen) // 用自定义全屏代理自
 
 	if (!c->isfullscreen && old_fullscreen_state) {
 		restore_size_per(c->mon, c);
+	}
+
+	if (c->isfullscreen && !old_fullscreen_state) {
+		save_old_size_per(c->mon);
 	}
 
 	arrange(c->mon, false, false);
