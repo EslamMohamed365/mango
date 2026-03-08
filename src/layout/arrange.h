@@ -89,7 +89,7 @@ void set_size_per(Monitor *m, Client *c) {
 	wl_list_for_each(fc, &clients, link) {
 		if (VISIBLEON(fc, m) && ISTILED(fc) && fc != c) {
 			if (current_layout->id == CENTER_TILE &&
-				!(fc->isleftstack ^ c->isleftstack))
+				(fc->isleftstack ^ c->isleftstack))
 				continue;
 			c->master_mfact_per = fc->master_mfact_per;
 			c->master_inner_per = fc->master_inner_per;
@@ -280,9 +280,11 @@ void resize_tile_master_horizontal(Client *grabc, bool isdrag, int32_t offsetx,
 		wl_list_for_each(tc, &clients, link) {
 			if (VISIBLEON(tc, grabc->mon) && ISTILED(tc)) {
 
-				if (!isdrag && tc != grabc && type != CENTER_TILE) {
+				if (!isdrag && tc != grabc) {
 					if (!tc->ismaster && new_stack_inner_per != 1.0f &&
-						grabc->old_stack_inner_per != 1.0f)
+						grabc->old_stack_inner_per != 1.0f &&
+						(type != CENTER_TILE ||
+						 !(grabc->isleftstack ^ tc->isleftstack)))
 						tc->stack_inner_per = (1 - new_stack_inner_per) /
 											  (1 - grabc->old_stack_inner_per) *
 											  tc->stack_inner_per;
@@ -653,7 +655,7 @@ void resize_tile_scroller(Client *grabc, bool isdrag, int32_t offsetx,
 		stack_head->scroller_proportion = new_scroller_proportion;
 
 		wl_list_for_each(tc, &clients, link) {
-			if (new_stack_proportion != 1.0f &&
+			if (!isdrag && new_stack_proportion != 1.0f &&
 				grabc->old_stack_proportion != 1.0f && tc != grabc &&
 				ISTILED(tc) && get_scroll_stack_head(tc) == stack_head) {
 				tc->stack_proportion = (1.0f - new_stack_proportion) /
